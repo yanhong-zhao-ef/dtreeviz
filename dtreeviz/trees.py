@@ -6,6 +6,7 @@ from sklearn import tree
 from graphviz.backend import run
 import matplotlib.pyplot as plt
 from dtreeviz.shadow import *
+from dtreeviz.utils import *
 from numbers import Number
 import matplotlib.patches as patches
 import tempfile
@@ -84,7 +85,7 @@ class DTreeViz:
             makedirs(path.parent)
 
         format = path.suffix[1:] # ".svg" -> "svg" etc...
-        if format=='svg':
+        if False: #format=='svg':
             pdffilename = f"{path.parent}/{path.stem}.pdf"
             g = graphviz.Source(self.dot, format='pdf')
             g.render(directory=path.parent, filename=path.stem, view=False, cleanup=True)
@@ -97,10 +98,17 @@ class DTreeViz:
         else:
             g = graphviz.Source(self.dot, format=format)
             fname = g.save(directory=path.parent, filename=path.stem)
-            cmd = ["dot", "-Tpng", "-o", filename, fname]
+            cmd = ["dot", f"-T{format}", "-o", filename, fname]
             # print(' '.join(cmd))
             stdout, stderr = run(cmd, capture_output=True, check=True, quiet=False)
             # g.render(directory=path.parent, filename=path.stem, view=False, cleanup=True)
+
+            if format=='svg':
+                with open(filename) as f:
+                    svg = f.read()
+                svg = inline_svg_images(svg)
+                with open(filename, "w") as f:
+                    f.write(svg)
 
 
 def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifier),
@@ -172,11 +180,14 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
 
     def split_node(name, node_name, split):
         if fancy:
+            svgfilename = f"{tmp}/node{node.id}_{getpid()}.svg"
+            pngfilename = f"{tmp}/node{node.id}_{getpid()}.png"
+            w,h = get_SVG_shape(svgfilename)
             labelgraph = node_label(node) if show_node_labels else ''
             html = f"""<table border="0">
             {labelgraph}
             <tr>
-                    <td port="img"><img src="{tmp}/node{node.id}_{getpid()}.svg"/></td>
+                    <td port="img" fixedsize="true" width="{w}" height="{h}"><img src="{pngfilename}"/></td>
             </tr>
             </table>"""
         else:
@@ -329,6 +340,8 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
     if shadow_tree.isclassifier():
         class_values = shadow_tree.unique_target_values
         colors = {v:color_values[i] for i,v in enumerate(class_values)}
+
+    create_blank_png(f"{tmp}/blank_{getpid()}.png")
 
     y_range = (min(y_train)*1.03, max(y_train)*1.03) # same y axis for all
 
@@ -549,6 +562,7 @@ def class_split_viz(node: ShadowDecTreeNode,
 
     if filename is not None:
         plt.savefig(filename, bbox_inches='tight', pad_inches=0)
+        plt.savefig(filename.replace('.svg', '.png'), bbox_inches='tight', pad_inches=0)
         plt.close()
 
 

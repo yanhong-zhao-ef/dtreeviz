@@ -138,9 +138,8 @@ viz = viz_iris(fancy=True, orientation='TD')
 
 # tmp = tempfile.gettempdir()
 # print(f"Tmp dir is {tmp}")
-# with open("/tmp/t3.dot", "w") as f:
-#     f.write(st+"\n")
+with open("/tmp/t.dot", "w") as f:
+    f.write(viz.dot+"\n")
 #
-#print(viz.dot)
-#viz.save("/tmp/t.svg")
+viz.save("/tmp/t.svg")
 viz.view()

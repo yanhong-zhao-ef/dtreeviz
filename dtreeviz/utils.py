@@ -1,19 +1,23 @@
 import xml.etree.cElementTree as ET
+from numbers import Number
+from typing import Tuple
+from pathlib import Path
+
 
 def inline_svg_images(svg) -> str:
     """
     Inline IMAGE tag refs in graphviz/dot -> SVG generated files.
 
-    Convert all image tag refs directly under g tags like:
+    Convert all .png image tag refs directly under g tags like:
 
     <g id="node1" class="node">
-        <image xlink:href="/tmp/node4.svg" width="45px" height="76px" preserveAspectRatio="xMinYMin meet" x="76" y="-80"/>
+        <image xlink:href="/tmp/node4.png" width="45px" height="76px" preserveAspectRatio="xMinYMin meet" x="76" y="-80"/>
     </g>
 
-    to
+    to include the .svg equivalent:
 
     <g id="node1" class="node">
-        <svg width="49.0px" height="80.8px" preserveAspectRatio="xMinYMin meet" x="76" y="-80">
+        <svg width="45px" height="76px" viewBox="0 0 49.008672 80.826687" preserveAspectRatio="xMinYMin meet" x="76" y="-80">
             XYZ
         </svg>
     </g>
@@ -45,13 +49,14 @@ def inline_svg_images(svg) -> str:
     for img in image_tags:
         # load ref'd image and get svg root
         filename = img.attrib["{http://www.w3.org/1999/xlink}href"]
-        with open(filename) as f:
+        svgfilename = filename.replace('.png', '.svg')
+
+        with open(svgfilename) as f:
             imgsvg = f.read()
         imgroot = ET.fromstring(imgsvg)
         for k,v in img.attrib.items(): # copy IMAGE tag attributes to svg from image file
-            if k not in {"width", "height", "{http://www.w3.org/1999/xlink}href"}:
+            if k not in {"{http://www.w3.org/1999/xlink}href"}:
                 imgroot.attrib[k] = v
-        del imgroot.attrib["viewBox"]
         # replace IMAGE with SVG tag
         p = parent_map[img]
         # print("BEFORE " + ', '.join([str(c) for c in p]))
@@ -65,13 +70,11 @@ def inline_svg_images(svg) -> str:
     return xml_str
 
 
-def get_SVG_shape(filename):
+def get_SVG_shape(filename) -> Tuple[Number,Number]:
     """
     Sample line from SVG file from which we can get w,h:
     <svg height="122.511795pt" version="1.1" viewBox="0 0 451.265312 122.511795"
          width="451.265312pt" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="...">
-
-    Hmm...Seems we don't need this anymore but I will leave it just in case
     """
     with open(filename, "r") as f:
         for line in f.readlines():
@@ -83,6 +86,15 @@ def get_SVG_shape(filename):
                     if len(a) == 2:
                         d[a[0]] = a[1].strip('"').strip('pt')
                 return float(d['width']), float(d['height'])
+
+
+def create_blank_png(filename):
+    """
+    Create a .png file from a predefined blank .png file stored as string here in this
+    function.
+    """
+    with open(filename, "wb") as f:
+        f.write(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x01sRGB\x00\xae\xce\x1c\xe9\x00\x00\x01YiTXtXML:com.adobe.xmp\x00\x00\x00\x00\x00<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 5.4.0">\n   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n      <rdf:Description rdf:about=""\n            xmlns:tiff="http://ns.adobe.com/tiff/1.0/">\n         <tiff:Orientation>1</tiff:Orientation>\n      </rdf:Description>\n   </rdf:RDF>\n</x:xmpmeta>\nL\xc2\'Y\x00\x00\x00\x0cIDAT\x08\x1dc\xf8\xff\xff?\x00\x05\xfe\x02\xfe\x9f\xca-\x13\x00\x00\x00\x00IEND\xaeB`\x82')
 
 
 if __name__ == '__main__':
