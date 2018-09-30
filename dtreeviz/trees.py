@@ -85,30 +85,23 @@ class DTreeViz:
             makedirs(path.parent)
 
         format = path.suffix[1:] # ".svg" -> "svg" etc...
-        if False: #format=='svg':
-            pdffilename = f"{path.parent}/{path.stem}.pdf"
-            g = graphviz.Source(self.dot, format='pdf')
-            g.render(directory=path.parent, filename=path.stem, view=False, cleanup=True)
-            # cmd = ["pdftocairo", "-svg", pdffilename, filename]
-            cmd = ["pdf2svg", pdffilename, filename]
-            # print(' '.join(cmd))
-            # print(f"pdftocairo -svg {pdffilename} {filename}")
+        g = graphviz.Source(self.dot, format=format)
+        if format=='svg':
+            fname = g.save(directory=path.parent, filename=path.stem)
+            cmd = ["dot", f"-T{format}:cairo", "-o", filename, fname]
+            print(' '.join(cmd))
             stdout, stderr = run(cmd, capture_output=True, check=True, quiet=False)
-            remove(pdffilename)
+            # now merge in referenced SVG images
+            with open(filename) as f:
+                svg = f.read()
+            svg = inline_svg_images(svg)
+            with open(filename+'.new', "w") as f:
+                f.write(svg)
         else:
-            g = graphviz.Source(self.dot, format=format)
             fname = g.save(directory=path.parent, filename=path.stem)
             cmd = ["dot", f"-T{format}", "-o", filename, fname]
             # print(' '.join(cmd))
             stdout, stderr = run(cmd, capture_output=True, check=True, quiet=False)
-            # g.render(directory=path.parent, filename=path.stem, view=False, cleanup=True)
-
-            if format=='svg':
-                with open(filename) as f:
-                    svg = f.read()
-                svg = inline_svg_images(svg)
-                with open(filename, "w") as f:
-                    f.write(svg)
 
 
 def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifier),
@@ -168,9 +161,6 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
 
     :return: A string in graphviz DOT language that describes the decision tree.
     """
-    def round(v,ndigits=precision):
-        return format(v, '.' + str(ndigits) + 'f')
-
     def node_name(node : ShadowDecTreeNode) -> str:
         if node.feature_name() is None:
             return f"node{node.id}"
@@ -187,7 +177,7 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
             html = f"""<table border="0">
             {labelgraph}
             <tr>
-                    <td port="img" fixedsize="true" width="{w}" height="{h}"><img src="{pngfilename}"/></td>
+                    <td port="img" fixedsize="true" width="{w}" height="{h}"><img src="{svgfilename}"/></td>
             </tr>
             </table>"""
         else:
@@ -278,7 +268,7 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
             if isinstance(v,int) or isinstance(v, str):
                 disp_v = v
             else:
-                disp_v = round(v, precision)
+                disp_v = myround(v, precision)
             values.append(f'<td cellpadding="1" align="right" bgcolor="white"><font face="Helvetica" color="{color}" point-size="{label_fontsize}">{disp_v}</font></td>')
 
         return f"""
@@ -292,6 +282,9 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
         </table>
         """
 
+    def instance_html_new(path, label_fontsize: int = 11):
+        return ""
+
     def instance_gr():
         if X is None:
             return ""
@@ -300,7 +293,7 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
         if shadow_tree.isclassifier():
             edge_label = f" Prediction<br/> {path[-1].prediction_name()}"
         else:
-            edge_label = f" Prediction<br/> {round(path[-1].prediction(), precision)}"
+            edge_label = f" Prediction<br/> {myround(path[-1].prediction(), precision)}"
         return f"""
             subgraph cluster_instance {{
                 style=invis;
@@ -341,7 +334,11 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
         class_values = shadow_tree.unique_target_values
         colors = {v:color_values[i] for i,v in enumerate(class_values)}
 
-    create_blank_png(f"{tmp}/blank_{getpid()}.png")
+    if X is not None:
+        X_filename = f"{tmp}/X_{getpid()}.svg"
+        print(X_filename)
+        draw_instance(X, path, X_filename,
+                      feature_names, orientation, max_X_features_TD, max_X_features_LR, precision)
 
     y_range = (min(y_train)*1.03, max(y_train)*1.03) # same y axis for all
 
@@ -381,7 +378,7 @@ def dtreeviz(tree_model: (tree.DecisionTreeRegressor, tree.DecisionTreeClassifie
                                highlight_node=node.id in highlight_path)
 
         nname = node_name(node)
-        gr_node = split_node(node.feature_name(), nname, split=round(node.split()))
+        gr_node = split_node(node.feature_name(), nname, split=myround(node.split(), precision))
         internal.append(gr_node)
 
     leaves = []
@@ -545,7 +542,7 @@ def class_split_viz(node: ShadowDecTreeNode,
         t.set_clip_on(False)
         ax.add_patch(t)
         ax.text(node.split(), -2 * th,
-                f"{round(node.split(),precision)}",
+                f"{myround(node.split(),precision)}",
                 horizontalalignment='center',
                 fontsize=ticks_fontsize, color=GREY)
 
@@ -648,7 +645,7 @@ def regr_split_viz(node: ShadowDecTreeNode,
         ax.add_patch(t)
 
         # ax.text(node.split(), 0,
-        #         f"{round(node.split(),precision)}",
+        #         f"{myround(node.split(),precision)}",
         #         horizontalalignment='center',
         #         fontsize=ticks_fontsize, color=GREY)
 
@@ -690,7 +687,7 @@ def regr_leaf_viz(node : ShadowDecTreeNode,
     # ax.set_yticks(y_range)
 
     ticklabelpad = plt.rcParams['xtick.major.pad']
-    ax.annotate(f"{target_name}={round(m,precision)}\nn={len(y)}",
+    ax.annotate(f"{target_name}={myround(m,precision)}\nn={len(y)}",
                 xy=(.5, 0), xytext=(.5, -.5*ticklabelpad), ha='center', va='top',
                 xycoords='axes fraction', textcoords='offset points',
                 fontsize = label_fontsize, fontname = "Arial", color = GREY)
@@ -751,6 +748,59 @@ def draw_legend(shadow_tree, target_name, filename):
     ax.xaxis.set_visible(False)
     ax.yaxis.set_visible(False)
 
+    if filename is not None:
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+
+def draw_instance(X, path, filename, feature_names, orientation, max_X_features_TD, max_X_features_LR, precision, label_fontsize: int = 11):
+    fig, ax = plt.subplots()
+
+    # hide axes
+    # fig.patch.set_visible(False)
+    ax.axis('off')
+    ax.axis('tight')
+
+    features_used = [node.feature() for node in path[:-1]]  # don't include leaf
+    display_X = X
+    display_feature_names = feature_names
+    highlight_feature_indexes = features_used
+    if (orientation == 'TD' and len(X) > max_X_features_TD) or \
+        (orientation == 'LR' and len(X) > max_X_features_LR):
+        # squash all features down to just those used
+        display_X = [X[i] for i in features_used] + ['...']
+        display_feature_names = [node.feature_name() for node in path[:-1]] + ['...']
+        highlight_feature_indexes = range(0, len(features_used))
+
+    headers = []
+    header_colors = []
+    for i, name in enumerate(display_feature_names):
+        color = GREY
+        if i in highlight_feature_indexes:
+            color = HIGHLIGHT_COLOR
+        header_colors.append(color)
+        headers.append(name)
+
+    values = []
+    for i, v in enumerate(display_X):
+        if isinstance(v, int) or isinstance(v, str):
+            disp_v = v
+        else:
+            disp_v = myround(v, precision)
+        values.append(disp_v)
+
+    tab = ax.table(cellText=[values],
+                   colLabels=headers,
+                   loc='center')
+    tab.auto_set_font_size(False)
+    for key, cell in tab.get_celld().items():
+        row, col = key
+        if row > 0 and col > 0:
+            print(key)
+            cell.set_fontsize(11)
+            cell.set_text_props(fontname='Arial', color=GREY, fontsize=11)
+
+    fig.tight_layout()
     if filename is not None:
         plt.savefig(filename, bbox_inches='tight', pad_inches=0)
         plt.close()

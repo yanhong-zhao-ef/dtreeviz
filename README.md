@@ -154,4 +154,20 @@ python setup.py install -f
 
 This will push the `dtreeviz` library to your local egg cache. E.g., on Terence's box, it add `/Users/parrt/anaconda3/lib/python3.6/site-packages/dtreeviz-0.1-py3.6.egg`.
 
+#### more SVG stuff
 
+**trying to get rid of dependency on librsvg**. This [link](http://graphviz.996277.n3.nabble.com/bad-text-positions-in-svg-output-on-linux-td1537i20.html) indicates that our problem with graphviz SVG output not doing fonts right is because "*Using -Tsvg leaves font management in the hands of the svg viewer used, which will probably mean that text in the output may not be quite right.*"  We want `-Tsvg:cairo`.  
+
+there was a bug per the previous paragraph with text management and so I used matplotlib to get the legend.  tried to get the table but got stuck trying to compute font metrics to get it to work right.  I went back to embedding my own images and got that to work.  I tricked graphviz by embedding png not .svg and then replacing the refs to .svg files.  Then I can run my embedding function.
+ 
+got sick of working on that and searched again for problems with svg graphviz.  Then I noticed that this actually does the embedding for me if I use `-Tsvg:cairo` vs `-Tsvg` ugh.  so much wasted time trying to get around problems.
+
+ now I think we just figured it out.  originally I thought that this was not working to import svg but what we were testing was likely trying to ge nerate png from importing SVG; this still fails on the Mac:
+ 
+dot -Tpng t.dot > t.png
+
+but 
+
+dot -Tpng t.dot > t.svg
+
+is fine.  so maybe it was the way we were rendering things at the beginning that seemed to require the complicated librsvg. ugh.
