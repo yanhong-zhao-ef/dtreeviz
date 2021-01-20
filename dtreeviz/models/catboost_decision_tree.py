@@ -15,6 +15,8 @@ class ShadowCatboostDTree(ShadowDecTree):
     # need to figure out what this global config means might not need it
     ROOT_NODE = 0
     TREE_LEAF = -1
+    NO_SPLIT = -2
+    NO_FEATURE = -2
     def __init__(self, model,
                  tree_index: int,
                  x_data,
@@ -25,18 +27,20 @@ class ShadowCatboostDTree(ShadowDecTree):
                  pool = None,
                  ):
         self.model = model
-        self.tree_index = tree_index
+        self.tree_idx = tree_index
         # need to figure out what is the tree to dataframe is doing for xgboost
         # self.tree_to_dataframe = self._get_tree_dataframe()
-        # self.children_left = self._calculate_children(self.__class__.LEFT_CHILDREN_COLUMN)
-        # self.children_right = self._calculate_children(self.__class__.RIGHT_CHILDREN_COLUMN)
+        self.children_left = self.get_children_left()
+        self.children_right = self.get_children_right()
+        self.depth = self.get_max_depth()
         # self.config = json.loads(self.booster.save_config())
-        # self.node_to_samples = None  # lazy initialized
+        self.node_to_samples = None  # lazy initialized
         self.features = None  # lazy initialized
         self.pool = pool
         super().__init__(model, x_data, y_data, feature_names, target_name, class_names)
 
     def _splits_by_tree_index(self):
+        """Splits are ordered where the last layer before leaves is shown first with root node's split appearing last in the list"""
         return self.model._get_tree_splits(self.tree_idx, None)
 
     def _tree_leaf_values_by_tree_index(self):
@@ -53,8 +57,13 @@ class ShadowCatboostDTree(ShadowDecTree):
     @staticmethod
     def _layer_of_symmetric_tree(id):
         """Given the index in a symmetric tree return the layer of which the node id belongs"""
-        return int(math.floor(math.log2(id+1)))
-        
+        return int(math.floor(math.log2(id + 1)))
+
+    @property
+    def non_leaf_node_count(self):
+        non_leaf_node_counts = self.nnodes() - self.model.get_tree_leaf_counts()[self.tree_idx]
+        return non_leaf_node_counts
+
     def is_fit(self):
         # check if the catboost tree model is fitted
         return self.model.is_fitted()
@@ -67,6 +76,10 @@ class ShadowCatboostDTree(ShadowDecTree):
         else:
             raise VisualisationNotYetSupportedError("is_classifier()", "Catboost")
 
+    # TODO - add implementation
+    def get_class_weight(self):
+            return None
+
     def get_class_weights(self):
         if self.is_classifier():
             return self.model.get_all_params()['class_weights']
@@ -78,7 +91,6 @@ class ShadowCatboostDTree(ShadowDecTree):
     def get_features(self):
         if self.features is not None:
             return self.features
-
         feature_index = [self.get_node_feature(i) for i in range(0, self.nnodes())]
         self.features = np.array(feature_index)
         return self.features
@@ -101,12 +113,14 @@ class ShadowCatboostDTree(ShadowDecTree):
         if self.node_to_samples is not None:
             return self.node_to_samples
         if self.pool is None:
-            prediction_leaves = self.model.calc_leaf_indexes(self.x_data, self.tree_index, self.tree_index+1)
+            prediction_leaves = self.model.calc_leaf_indexes(self.x_data, self.tree_idx, self.tree_idx+1)
         else:
-            prediction_leaves = self.model.calc_leaf_indexes(self.pool, self.tree_index, self.tree_index + 1)
+            prediction_leaves = self.model.calc_leaf_indexes(self.pool, self.tree_idx, self.tree_idx + 1)
         node_to_samples = defaultdict(list)
         for sample_i, prediction_leaf in enumerate(prediction_leaves):
-            prediction_path = self._get_leaf_prediction_path(prediction_leaf)
+            assert len(prediction_leaf) == 1
+            prediction_leaf_node_id = prediction_leaf[0] + self.non_leaf_node_count
+            prediction_path = self._get_leaf_prediction_path(prediction_leaf_node_id)
             for node_id in prediction_path:
                 node_to_samples[node_id].append(sample_i)
         self.node_to_samples = node_to_samples
@@ -146,12 +160,16 @@ class ShadowCatboostDTree(ShadowDecTree):
         # a list of all left nodes by node index
         children_left = []
         if self._is_oblivious():
-            for node_id in range(self.nnodes()-self.model.get_tree_leaf_counts()[self.tree_index]):
-                if node_id != self.__class__.ROOT_NODE and node_id % 2 != 0:
-                    children_left.append(node_id)
+            for node_id in range(self.nnodes()):
+                left_child = 2 * node_id + 1
+                if node_id < self.non_leaf_node_count:
+                    children_left.append(left_child)
+                else:
+                    # this is a leaf node
+                    children_left.append(self.__class__.TREE_LEAF)
         else:
             # need to work through an asymmetric example
-            pass
+            raise NotImplementedError
         return np.array(children_left)
 
     def get_children_right(self):
@@ -162,18 +180,28 @@ class ShadowCatboostDTree(ShadowDecTree):
         """
         children_right = []
         if self._is_oblivious():
-            for node_id in range(self.nnodes()-self.model.get_tree_leaf_counts()[self.tree_index]):
-                if node_id != self.__class__.ROOT_NODE and node_id % 2 == 0:
-                    children_right.append(node_id)
+            for node_id in range(self.nnodes()):
+                right_child = 2 * node_id + 2
+                if node_id < self.non_leaf_node_count:
+                    children_right.append(right_child)
+                else:
+                    # this is a leaf node
+                    children_right.append(self.__class__.TREE_LEAF)
         else:
-            pass
+            raise NotImplementedError
         return np.array(children_right)
 
     def _get_node_feature_value(self, id):
         splits = self._splits_by_tree_index()
+        leaf_ids = [leaf.id for leaf in self.leaves]
         if self._is_oblivious():
-            # assume index starts from 0
-            feature_and_value = splits[self._layer_of_symmetric_tree(id)]
+            assert len(splits) == self.depth
+            if id == self.__class__.ROOT_NODE:
+                feature_and_value = splits[-1]
+            elif id in leaf_ids:
+                feature_and_value = f'{self.__class__.NO_FEATURE}, bin={self.__class__.NO_SPLIT}'
+            else:
+                feature_and_value = splits[(self.depth-1)-self._layer_of_symmetric_tree(id)]
         else:
             feature_and_value = splits[id]
         return feature_and_value
@@ -185,14 +213,23 @@ class ShadowCatboostDTree(ShadowDecTree):
 
     def get_node_feature(self, id) -> int:
         feature_and_value = self._get_node_feature_value(id)
-        split_feature = str(feature_and_value.split(',')[0])  # replaced by regex later
+        split_feature = int(feature_and_value.split(',')[0])  # replaced by regex later
         return split_feature
 
     def get_node_nsamples_by_class(self, id):
-        pass
+        all_nodes = self.internal + self.leaves
+        if self.is_classifier():
+            node_value = [node.n_sample_classes() for node in all_nodes if node.id == id]
+            return node_value[0][0], node_value[0][1]
 
     def get_prediction(self, id):
-        pass
+        all_nodes = self.internal + self.leaves
+        if self.is_classifier():
+            node_value = [node.n_sample_classes() for node in all_nodes if node.id == id]
+            return np.argmax((node_value[0][0], node_value[0][1]))
+        elif not self.is_classifier():
+            node_samples = [node.samples() for node in all_nodes if node.id == id][0]
+            return np.mean(self.y_data[node_samples])
 
     def nnodes(self):
         # following the implementation at plot_tree https://github.com/catboost/catboost/blob/ccf8c0fe58737c9f728e14472fa37277ea4db39c/catboost/python-package/catboost/core.py#L3345
@@ -201,25 +238,11 @@ class ShadowCatboostDTree(ShadowDecTree):
             splits = self._splits_by_tree_index()
             num_layers = len(splits)+1
             # sum of a geometric sequence with a0=1 r=2
-            sum_nodes += 2^num_layers - 1
+            sum_nodes += 2**num_layers - 1
         else:
             splits = self._splits_by_tree_index()
             sum_nodes += len(splits)
         return sum_nodes
-
-    def _assign_node_ids(self):
-        # deprecate this function later, this is just food for thought for now
-        if self._is_oblivious():
-            pass
-            # if we are dealing with the symmetric tree then we can just pose the node ids as from 0 - number of nodes
-            # where node idx 0 is the root node of the tree with index 0
-            # each tree then get index  (0,1,2) etc.
-        else:
-            pass
-            # for asymmetric tree building this is more complicated which need to take in account of step node
-            # depending on step node list which could be like this [(1, 4), (1, 2), (0, 0), (0, 0), (1, 2), (0, 0), (0, 0)]
-            # the node ids might be 0,1,4 in this case with other ids for leaf nodes (we might not need the leaf nodes here)
-        return None
 
     def get_node_criterion(self, id):
         return VisualisationNotYetSupportedError("get_node_criterion()", "Catboost")

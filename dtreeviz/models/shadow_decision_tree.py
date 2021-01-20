@@ -526,10 +526,15 @@ class ShadowDecTreeNode():
         """Returns the list of indexes to the left and the right of the split value."""
 
         samples = np.array(self.samples())
-        node_X_data = self.shadow_tree.x_data[samples, self.feature()]
-        split = self.split()
-        left = np.nonzero(node_X_data < split)[0]
-        right = np.nonzero(node_X_data >= split)[0]
+        if len(samples) == 0:
+            # there are no samples in this node
+            left = []
+            right = []
+        else:
+            node_X_data = self.shadow_tree.x_data[samples, self.feature()]
+            split = self.split()
+            left = np.nonzero(node_X_data < split)[0]
+            right = np.nonzero(node_X_data >= split)[0]
         return left, right
 
     def isleaf(self) -> bool:
